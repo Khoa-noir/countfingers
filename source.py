@@ -9,7 +9,7 @@ import math
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
-    static_image_mode=False,
+    static_image_mode=True,          # CHỈ ẢNH -> bắt buộc trên Streamlit Cloud
     max_num_hands=2,
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
@@ -80,111 +80,92 @@ st.set_page_config(page_title="Hand Gesture Unlock", layout="wide")
 
 st.markdown("<h1 style='text-align:center'>Nhận diện cử chỉ bàn tay</h1>", unsafe_allow_html=True)
 
-# Hướng dẫn sử dụng
 st.markdown("""
 ### Hướng dẫn sử dụng:
 1. Bật camera.
-2. (Tùy chọn) Đặt mật khẩu cử chỉ: Tick và nhấn 'Record Gesture Password'.
-3. (Tùy chọn) Bật mở khóa bằng cử chỉ: Tick 'Unlock by Gesture'.
-4. Xem các tính năng hiển thị: số ngón, landmark, giá trị đặc trưng.
+2. (Tùy chọn) Nhấn 'Ghi lại mật khẩu cử chỉ'.
+3. (Tùy chọn) Bật mở khóa bằng cử chỉ.
+4. Xem số ngón, landmark và đặc trưng.
 """)
 
-# --------- Nhóm điều khiển ----------
-st.sidebar.header("Bước 1: Điều khiển chính")
+# Sidebar
+st.sidebar.header("Điều khiển")
 camera_on = st.sidebar.checkbox("Bật Camera")
-set_new_password = st.sidebar.checkbox("Đặt mật khẩu cử chỉ")
+set_new_password = st.sidebar.button("Ghi lại mật khẩu cử chỉ")
 unlock_by_gesture = st.sidebar.checkbox("Mở khóa bằng cử chỉ")
-
-if set_new_password:
-    if st.sidebar.button("Ghi lại mật khẩu"):
-        st.session_state.record_gesture = True
-        st.success("Sẵn sàng ghi lại cử chỉ! Thực hiện cử chỉ của bạn.")
-
-# --------- Nhóm hiển thị video & tính năng ----------
-st.sidebar.header("Bước 2: Hiển thị")
 counting_number = st.sidebar.checkbox("Hiển thị số ngón")
 display_landmarks = st.sidebar.checkbox("Hiển thị landmark")
 show_features = st.sidebar.checkbox("Hiển thị giá trị đặc trưng")
 
-# Video frame
-FRAME_WINDOW = st.image([])
-
-# Khởi tạo session state
-if 'gesture_password' not in st.session_state:
+# Session state
+if "gesture_password" not in st.session_state:
     st.session_state.gesture_password = None
-if 'record_gesture' not in st.session_state:
-    st.session_state.record_gesture = False
-if 'last_unlock_time' not in st.session_state:
+if "last_unlock_time" not in st.session_state:
     st.session_state.last_unlock_time = 0
-if 'last_wrong_time' not in st.session_state:
+if "last_wrong_time" not in st.session_state:
     st.session_state.last_wrong_time = 0
 
-# ----------------- Xử lý video -----------------
-if camera_on:
-    cap = cv2.VideoCapture(0)
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            st.error("Không thể truy cập camera")
-            break
+# CAMERA (streamlit cloud only supports this)
+img_file = st.camera_input("Camera", key="camera") if camera_on else None
 
-        frame = cv2.flip(frame, 1)
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = hands.process(img_rgb)
+if img_file is not None:
+    img = cv2.imdecode(np.frombuffer(img_file.getvalue(), np.uint8), cv2.IMREAD_COLOR)
+    frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        total_fingers = 0
-        gesture_info = None
+    result = hands.process(frame)
+    gesture_info = None
 
-        if result.multi_hand_landmarks:
-            for hand_landmarks in result.multi_hand_landmarks:
-                # Hiển thị số ngón
-                if counting_number:
-                    fingers = number_identify(hand_landmarks, frame.shape)
-                    total_fingers += fingers
-                    cv2.putText(frame, f"Số ngón: {total_fingers}", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                # Vẽ landmark
-                if display_landmarks:
-                    mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                # Trích xuất đặc trưng
-                gesture_info = extract_gesture_features(hand_landmarks, frame.shape)
-                # Ghi lại mật khẩu
-                if st.session_state.record_gesture:
-                    st.session_state.gesture_password = gesture_info
-                    st.session_state.record_gesture = False
-                    st.success("Đã lưu mật khẩu cử chỉ!")
-                    st.write("Đặc trưng đã lưu:", st.session_state.gesture_password)
-                # Mở khóa
-                current_time = time.time()
-                if unlock_by_gesture and st.session_state.gesture_password and (current_time - st.session_state.last_unlock_time) > 3:
-                    if compare_gestures(gesture_info, st.session_state.gesture_password):
-                        st.session_state.last_unlock_time = current_time
-                    else:
-                        st.session_state.last_wrong_time = current_time
-                # Hiển thị giá trị đặc trưng
-                if show_features and gesture_info:
-                    y_pos = 10
-                    for key, val in gesture_info.items():
-                        text = f"{key}: {val:.2f}" if isinstance(val, float) else f"{key}: {val}"
-                        cv2.putText(frame, text, (450, y_pos), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-                        y_pos += 15
+    if result.multi_hand_landmarks:
+        hand_landmarks = result.multi_hand_landmarks[0]
 
-        # Thông báo mở khóa
-        if (time.time() - st.session_state.last_unlock_time) <= 3:
-            cv2.putText(frame, "ĐÃ MỞ KHÓA", (10, 70),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-        # Thông báo cử chỉ sai
-        if (time.time() - st.session_state.last_wrong_time) <= 3:
-            cv2.putText(frame, "CỬ CHỈ KHÔNG ĐÚNG", (10, 110),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+        # Số ngón
+        if counting_number:
+            fingers = number_identify(hand_landmarks, frame.shape)
+            cv2.putText(frame, f"Ngón: {fingers}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
 
-        FRAME_WINDOW.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    cap.release()
+        # Vẽ landmark
+        if display_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        # Extract features
+        gesture_info = extract_gesture_features(hand_landmarks, frame.shape)
+
+        # Ghi mật khẩu
+        if set_new_password:
+            st.session_state.gesture_password = gesture_info
+            st.success("Đã lưu mật khẩu cử chỉ!")
+
+        # Kiểm tra mở khóa
+        now = time.time()
+        if unlock_by_gesture and st.session_state.gesture_password:
+            if compare_gestures(gesture_info, st.session_state.gesture_password):
+                st.session_state.last_unlock_time = now
+            else:
+                st.session_state.last_wrong_time = now
+
+        # Hiển thị đặc trưng
+        if show_features:
+            y = 50
+            for key, val in gesture_info.items():
+                text = f"{key}: {val:.2f}" if isinstance(val, float) else f"{key}: {val}"
+                cv2.putText(frame, text, (10, y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+                y += 15
+
+    # Thông báo trạng thái
+    if time.time() - st.session_state.last_unlock_time < 3:
+        cv2.putText(frame, "ĐÃ MỞ KHÓA", (10, 250),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,255,0), 3)
+
+    if time.time() - st.session_state.last_wrong_time < 3:
+        cv2.putText(frame, "CỬ CHỈ SAI", (10, 300),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255,0,0), 3)
+
+    st.image(frame)
+
 else:
-    st.info("Camera đang tắt. Bật 'Bật Camera' để bắt đầu.")
-
-
+    st.info("Hãy bật Camera để bắt đầu.")
 
 # ".conda/python.exe" -m streamlit run source.py
+
